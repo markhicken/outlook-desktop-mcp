@@ -141,6 +141,17 @@ The first time a tool runs, macOS will show **two permission prompts** that you 
 
 Both permissions are one-time setup — macOS remembers them for future sessions.
 
+#### Timeouts
+
+Each AppleScript call is limited to 30 seconds, and the startup check to 10 seconds. If Outlook is slow to answer (a very large mailbox, or a busy New Outlook), raise the limits with environment variables in your MCP client's config:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `OUTLOOK_MCP_SCRIPT_TIMEOUT` | `30` | Seconds to wait for each tool's AppleScript before giving up |
+| `OUTLOOK_MCP_STARTUP_TIMEOUT` | `10` | Seconds to wait for Outlook to answer when the server starts |
+
+Values must be numbers greater than 0; anything else is ignored and the default is used. Remember that your MCP client may have its own request timeout, so a very long script timeout only helps if the client also waits that long.
+
 ## Available Tools by Platform
 
 ### Email
