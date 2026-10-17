@@ -152,6 +152,10 @@ Each AppleScript call is limited to 30 seconds, and the startup check to 10 seco
 
 Values must be numbers greater than 0; anything else is ignored and the default is used. Remember that your MCP client may have its own request timeout, so a very long script timeout only helps if the client also waits that long.
 
+#### Large folders
+
+`list_emails` and `list_drafts` read messages by position, so asking for the latest 3 items in a folder with tens of thousands of messages only touches those 3 and the cost does not grow with folder size. `unread_only` checks read flags 200 messages at a time and stops as soon as it has enough unread messages. `search_emails` and `read_email` with `subject_search` must still filter the whole folder by subject, so they scale with folder size; use a more specific query or a smaller folder, and raise `OUTLOOK_MCP_SCRIPT_TIMEOUT` if needed.
+
 ## Available Tools by Platform
 
 ### Email

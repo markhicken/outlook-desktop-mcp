@@ -26,6 +26,9 @@ from outlook_desktop_mcp.utils.applescript_helpers import (
 )
 from datetime import datetime, timedelta
 
+# How many messages' read flags to fetch per Apple event when looking for unread mail.
+UNREAD_SCAN_CHUNK = 200
+
 # --- Logging (all to stderr, stdout is reserved for MCP JSON-RPC) ---
 
 logging.basicConfig(
@@ -741,15 +744,14 @@ async def list_drafts(
 
     script = f'''tell application "Microsoft Outlook"
     set folderRef to drafts
-    set allMsgs to messages of folderRef
-    set msgCount to count of allMsgs
+    set msgCount to count of messages of folderRef
     set startIdx to {offset + 1}
     set endIdx to {end_index}
     if endIdx > msgCount then set endIdx to msgCount
     set output to ""
     if startIdx > msgCount then return output
     repeat with i from startIdx to endIdx
-        set m to item i of allMsgs
+        set m to message i of folderRef
         set mid to id of m
         set msubject to subject of m
         set mto to ""
@@ -989,38 +991,65 @@ async def list_emails(
         JSON array of email summary objects.
     """
     folder_ref = resolve_folder_ref(folder)
-    unread_filter = ' whose is read is false' if unread_only else ''
+    count = max(1, count)
+
+    # Row-building AppleScript shared by both strategies below.
+    row = f'''set mid to id of m
+            set msubject to subject of m
+            set msender to ""
+            set msenderName to ""
+            try
+                set snd to sender of m
+                try
+                    set msender to address of snd
+                end try
+                try
+                    set msenderName to name of snd
+                end try
+            end try
+            set mtime to time received of m as string
+            set misread to is read of m
+            set mattcount to 0
+            try
+                set mattcount to count of attachments of m
+            end try
+            set output to output & (mid as text) & "{DELIM}" & msubject & "{DELIM}" & msender & "{DELIM}" & msenderName & "{DELIM}" & mtime & "{DELIM}" & (misread as text) & "{DELIM}" & (mattcount as text) & "{RECORD_DELIM}"'''
+
+    # Never build a list of every message in the folder: Deleted Items or an inbox can hold tens of
+    # thousands, and fetching all those references is what made small requests take minutes. Messages
+    # are addressed by index instead, so Outlook only touches the ones we read.
+    if unread_only:
+        # Read the "is read" flags of 200 messages per Apple event and stop as soon as enough unread
+        # messages have been found, instead of filtering the whole folder with `whose`.
+        body = f'''set found to 0
+    set startAt to 1
+    repeat while found < maxCount and startAt <= msgCount
+        set endAt to startAt + {UNREAD_SCAN_CHUNK} - 1
+        if endAt > msgCount then set endAt to msgCount
+        set readFlags to is read of (messages startAt thru endAt of folderRef)
+        repeat with k from 1 to count of readFlags
+            if item k of readFlags is false then
+                set m to message (startAt + k - 1) of folderRef
+                {row}
+                set found to found + 1
+                if found >= maxCount then exit repeat
+            end if
+        end repeat
+        set startAt to endAt + 1
+    end repeat'''
+    else:
+        body = f'''if msgCount < maxCount then set maxCount to msgCount
+    repeat with i from 1 to maxCount
+        set m to message i of folderRef
+        {row}
+    end repeat'''
 
     script = f'''tell application "Microsoft Outlook"
     set folderRef to {folder_ref}
-    set allMsgs to messages of folderRef{unread_filter}
-    set msgCount to count of allMsgs
+    set msgCount to count of messages of folderRef
     set maxCount to {count}
-    if msgCount < maxCount then set maxCount to msgCount
     set output to ""
-    repeat with i from 1 to maxCount
-        set m to item i of allMsgs
-        set mid to id of m
-        set msubject to subject of m
-        set msender to ""
-        set msenderName to ""
-        try
-            set snd to sender of m
-            try
-                set msender to address of snd
-            end try
-            try
-                set msenderName to name of snd
-            end try
-        end try
-        set mtime to time received of m as string
-        set misread to is read of m
-        set mattcount to 0
-        try
-            set mattcount to count of attachments of m
-        end try
-        set output to output & (mid as text) & "{DELIM}" & msubject & "{DELIM}" & msender & "{DELIM}" & msenderName & "{DELIM}" & mtime & "{DELIM}" & (misread as text) & "{DELIM}" & (mattcount as text) & "{RECORD_DELIM}"
-    end repeat
+    {body}
     return output
 end tell'''
 
